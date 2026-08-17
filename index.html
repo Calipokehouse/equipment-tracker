@@ -951,8 +951,9 @@ function assignFlow(it){
 }
 
 /* ---------------- add / edit item ---------------- */
-function locOptions(site, sel){
-  return SITES.filter(s=>!site || s.code===site).map(s=>{
+function locOptions(site, sel, allowNone){
+  return (allowNone? '<option value="" '+(sel?'':'selected')+'>\u2014 no fixed home \u2014</option>' : '')+
+  SITES.filter(s=>!site || s.code===site).map(s=>{
     const ls = locsFor(s.code);
     if(!ls.length) return '';
     return '<optgroup label="'+esc(s.name)+'">'+ls.map(l=>'<option value="'+esc(l.name)+'" '+(sel===l.name?'selected':'')+'>'+esc(l.name)+(l.room?' \u2022 room':'')+'</option>').join('')+'</optgroup>';
@@ -968,11 +969,21 @@ function itemForm(existing){
     '<div class="f"><label>What is it</label><input id="name" value="'+esc(it.name||'')+'" placeholder="e.g. Sony ZV-E10 body"></div>'+
     '<div class="f2"><div class="f"><label>Category</label><select id="cat">'+cats+'</select></div>'+
       '<div class="f"><label>Quantity</label><input id="qty" type="number" min="1" value="'+(it.qty||1)+'"></div></div>'+
+    (existing? '' :
+      '<div class="f"><label>Checked out to (optional)</label><select id="holder">'+
+        '<option value="">\u2014 nobody, it is available \u2014</option>'+
+        SITES.map(st=>{
+          const mem = peopleList().filter(x=>(x.site||'A2')===st.code && x.active!==false);
+          return mem.length? '<optgroup label="'+esc(st.name)+'">'+
+            mem.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</optgroup>' : '';
+        }).join('')+
+      '</select></div>')+
     '<div class="f"><label>Team (optional)</label><select id="team"><option value="">\u2014 no team \u2014</option>'+
       teamNames().map(d=>'<option '+(it.team===d?'selected':'')+'>'+esc(d)+'</option>').join('')+'</select></div>'+
     '<div class="f"><label>Site</label><select id="site">'+sits+'</select></div>'+
-    '<div class="f"><label>Home location</label><select id="home">'+locOptions(it.site, it.home)+'</select></div>'+
-    '<div class="banner" style="background:var(--room-soft);border-color:#E4CC94">Pick a stream room as the home and this item is filed under that room, not a person.</div>'+
+    '<div class="f"><label>Home location (optional)</label><select id="home">'+locOptions(it.site, it.home, true)+'</select>'+
+      '<div style="font-size:12.5px;color:var(--muted);margin-top:5px">Where it lives when nobody has it. Leave blank for gear that stays with one person.</div></div>'+
+    '<div class="banner" style="background:var(--room-soft);border-color:#E4CC94">Pick a stream room as the home and this item files under that room. Pick a person above and it files under them instead.</div>'+
     '<div class="f"><label>Condition</label><select id="cond">'+conds+'</select></div>'+
     '<div class="f"><label>Serial / model (optional)</label><input id="serial" value="'+esc(it.serial||'')+'"></div>'+
     '<div class="f"><label>Notes (optional)</label><textarea id="notes" placeholder="Anything the next person needs to know">'+esc(it.notes||'')+'</textarea></div>'+
@@ -980,7 +991,7 @@ function itemForm(existing){
     '<button class="btn pri full" id="save">'+(existing?'Save changes':'Add to inventory')+'</button>',
   body=>{
     const siteSel = body.querySelector('#site'), homeSel = body.querySelector('#home');
-    siteSel.onchange = ()=>{ homeSel.innerHTML = locOptions(siteSel.value, ''); };
+    siteSel.onchange = ()=>{ homeSel.innerHTML = locOptions(siteSel.value, '', true); };
     body.querySelector('#save').onclick = ()=>{
       if(!requireOperator()) return;
       const name = body.querySelector('#name').value.trim();
@@ -988,24 +999,42 @@ function itemForm(existing){
       const cat = body.querySelector('#cat').value;
       const home = homeSel.value;
       const homeIsRoom = isRoom(home);
-      const keepStatus = existing ? it.status : (homeIsRoom ? 'in_room' : 'available');
+      const team = body.querySelector('#team').value;
+      const holderSel = body.querySelector('#holder');
+      const pid = holderSel ? holderSel.value : '';
+      const pname = pid && State.people[pid] ? State.people[pid].name : '';
+
+      /* A person wins, then a team, then a stream room, else it is available. */
+      let keepStatus, hid = it.holderId||'', hnm = it.holderName||'', room = it.room||'';
+      if(existing){ keepStatus = it.status; }
+      else if(pid){ keepStatus='with_employee'; hid=pid; hnm=pname; room=''; }
+      else if(team){ keepStatus='with_team'; room=''; }
+      else if(homeIsRoom){ keepStatus='in_room'; room=home; }
+      else { keepStatus='available'; }
+
       const rec = {
         id: existing? it.id : nextId(cat),
         name, category:cat,
         qty: Math.max(1, parseInt(body.querySelector('#qty').value,10)||1),
-        site: siteSel.value, home, team: body.querySelector('#team').value,
-        room: (keepStatus==='in_room') ? (existing? (it.room||home) : home) : (it.room||''),
+        site: siteSel.value, home, team,
+        room: existing ? ((it.status==='in_room') ? (it.room||home) : (it.room||'')) : room,
         condition: body.querySelector('#cond').value,
         serial: body.querySelector('#serial').value.trim(),
         notes: body.querySelector('#notes').value.trim(),
         status: keepStatus,
-        holderId: it.holderId||'', holderName: it.holderName||'',
+        holderId: hid, holderName: hnm,
         createdAt: it.createdAt||Date.now(), updatedAt: Date.now()
       };
       put('items', rec.id, rec);
       State.items[rec.id] = rec;
-      if(!existing) pushEvent({assetId:rec.id, assetName:name, action:'created', site:rec.site,
-        text:'Added to inventory \u2014 '+(homeIsRoom? home : (home||'stock'))+', '+siteShort(rec.site)});
+      if(!existing){
+        const where = rec.status==='with_employee' ? 'checked out to '+rec.holderName
+                    : rec.status==='with_team'     ? 'shared with '+rec.team
+                    : rec.status==='in_room'       ? 'in '+rec.room
+                    : (rec.home || 'stock');
+        pushEvent({assetId:rec.id, assetName:name, action:'created', site:rec.site,
+          text:'Added to inventory \u2014 '+where+', '+siteShort(rec.site)});
+      }
       toast(existing?'Saved':'Added '+rec.id);
       openItem(rec.id);
     };
