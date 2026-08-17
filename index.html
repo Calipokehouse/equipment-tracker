@@ -701,7 +701,7 @@ function holderText(it){
   if(it.status==='in_room') return it.room || 'Unassigned room';
   if(it.status==='with_team') return (it.team || 'Unassigned team')+' \u2014 shared';
   if(it.status==='with_employee') return it.holderName || 'Unassigned person';
-  return it.home || 'No home set';
+  return it.home || '';        /* nothing to say, so say nothing */
 }
 function isFormer(pid){ const p = State.people[pid]; return !!(p && p.active===false); }
 function owedItems(){ return items().filter(i=>i.status==='with_employee' && isFormer(i.holderId)); }
@@ -828,7 +828,7 @@ function rowHtml(i, grp){
   return '<button class="row s-'+i.status+(owed?' s-owed':'')+(grp?' isgroup':'')+'" '+attr+'>'+
     '<div class="main">'+
       '<div class="nm">'+esc(i.name)+' <span class="qty">\u00D7'+qty+'</span></div>'+
-      '<div class="holder'+(held?'':' free')+(owed?' owed':'')+'">'+esc(holderText(i))+'</div>'+
+      (holderText(i) ? '<div class="holder'+(held?'':' free')+(owed?' owed':'')+'">'+esc(holderText(i))+'</div>' : '')+
       '<div class="meta">'+
         (grp ? '<span class="grptag">'+(grp.open?'\u25BE hide':'\u25B8 show')+' '+qty+' tracked separately</span>'
              : chip(i.id,'ghost'))+
@@ -869,7 +869,7 @@ function openItem(id){
     '<div class="dcard">'+chip(it.id,'lg')+
       '<div class="dtitle">'+esc(it.name)+'</div>'+
       '<div><span class="pill p-'+it.status+'">'+STATUSES[it.status]+'</span>'+
-        '<span style="font-size:14px;margin-left:6px;font-weight:600">'+esc(holderText(it))+'</span></div>'+
+        (holderText(it)? '<span style="font-size:14px;margin-left:6px;font-weight:600">'+esc(holderText(it))+'</span>':'')+'</div>'+
       '<dl class="kv">'+
         '<dt>Site</dt><dd>'+esc(siteName(it.site))+'</dd>'+
         '<dt>Category</dt><dd>'+esc(catLabel(it.category))+'</dd>'+
@@ -877,7 +877,7 @@ function openItem(id){
           (it.status==='with_employee'?' <span style="color:var(--muted)">(via '+esc(it.holderName||'holder')+')</span>':'')+
           (it.status==='with_team'? (teamLead(itemTeam(it))? ' <span style="color:var(--muted)">('+esc(teamLead(itemTeam(it)))+' accountable)</span>' : ' <span style="color:var(--alert)">(no lead set)</span>') : '')
           : '<span style="color:var(--muted)">None</span>')+'</dd>'+
-        '<dt>Home</dt><dd>'+esc(it.home||'\u2014')+'</dd>'+
+        '<dt>Home</dt><dd>'+(it.home? esc(it.home) : '<span style="color:var(--faint)">no fixed home</span>')+'</dd>'+
         '<dt>Quantity</dt><dd>'+(it.qty||1)+'</dd>'+
         (it.serial?'<dt>Serial</dt><dd style="font-family:\'IBM Plex Mono\';font-size:13px">'+esc(it.serial)+'</dd>':'')+
         (it.condition?'<dt>Condition</dt><dd>'+esc(it.condition)+'</dd>':'')+
