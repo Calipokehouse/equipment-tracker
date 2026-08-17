@@ -754,7 +754,7 @@ function rowHtml(i){
   const held = i.status==='with_employee' || i.status==='with_team' || i.status==='in_room';
   return '<button class="row s-'+i.status+(owed?' s-owed':'')+'" data-item="'+esc(i.id)+'">'+
     '<div class="main">'+
-      '<div class="nm">'+esc(i.name)+((i.qty>1)?' <span class="qty">\u00D7'+i.qty+'</span>':'')+'</div>'+
+      '<div class="nm">'+esc(i.name)+' <span class="qty">\u00D7'+(i.qty||1)+'</span></div>'+
       '<div class="holder'+(held?'':' free')+(owed?' owed':'')+'">'+esc(holderText(i))+'</div>'+
       '<div class="meta">'+chip(i.id,'ghost')+
         (i.site!==State.fSite? ' <span class="sitetag other">'+esc(siteShort(i.site))+'</span>':'')+
@@ -992,6 +992,20 @@ function itemForm(existing){
   body=>{
     const siteSel = body.querySelector('#site'), homeSel = body.querySelector('#home');
     siteSel.onchange = ()=>{ homeSel.innerHTML = locOptions(siteSel.value, '', true); };
+
+    /* Picking a person moves the item to that person's site, since that is
+       where it now physically is. Changing the site by hand still wins. */
+    const holderSel = body.querySelector('#holder');
+    if(holderSel) holderSel.onchange = ()=>{
+      const p = State.people[holderSel.value];
+      if(!p) return;
+      const ps = p.site || 'A2';
+      if(siteSel.value !== ps){
+        siteSel.value = ps;
+        homeSel.innerHTML = locOptions(ps, '', true);
+        toast(p.name+' is at '+siteShort(ps));
+      }
+    };
     body.querySelector('#save').onclick = ()=>{
       if(!requireOperator()) return;
       const name = body.querySelector('#name').value.trim();
