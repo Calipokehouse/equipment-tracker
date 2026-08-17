@@ -110,9 +110,15 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
 .row:hover{border-color:var(--line-strong)}
 .row .main{min-width:0;flex:1}
 .row .nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .meta{font-size:12.5px;color:var(--faint);margin-top:4px;display:flex;align-items:center;gap:6px;min-width:0}
+.row .holder{font-size:14px;font-weight:600;color:var(--ink);margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .holder.free{font-weight:500;color:var(--muted)}
+.row .holder.owed{color:var(--alert)}
+.flagtag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--alert);background:var(--alert-soft);border:1px solid #EBB6B1;border-radius:4px;padding:1px 6px}
+.row .meta{font-size:12px;color:var(--faint);margin-top:5px;display:flex;align-items:center;gap:6px;min-width:0}
 .row .meta .where{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.row .right{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:44%}
+.row .right{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:38%}
 .row .right span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .row.s-available{border-left-color:var(--accent)}
 .row.s-in_room{border-left-color:var(--gold)}
@@ -743,15 +749,19 @@ function viewFind(){
 
 function rowHtml(i){
   const owed = i.status==='with_employee' && isFormer(i.holderId);
+  /* The question people actually ask is "who has it", so the holder gets its
+     own line at full width. Who logged the move lives in the item history. */
+  const held = i.status==='with_employee' || i.status==='with_team' || i.status==='in_room';
   return '<button class="row s-'+i.status+(owed?' s-owed':'')+'" data-item="'+esc(i.id)+'">'+
     '<div class="main">'+
       '<div class="nm">'+esc(i.name)+((i.qty>1)?' <span class="qty">\u00D7'+i.qty+'</span>':'')+'</div>'+
+      '<div class="holder'+(held?'':' free')+(owed?' owed':'')+'">'+esc(holderText(i))+'</div>'+
       '<div class="meta">'+chip(i.id,'ghost')+
         (i.site!==State.fSite? ' <span class="sitetag other">'+esc(siteShort(i.site))+'</span>':'')+
-        ' <span class="where">'+esc(holderText(i))+(owed?' \u2014 former employee':'')+'</span></div>'+
+        (owed? ' <span class="flagtag">not returned</span>':'')+
+      '</div>'+
     '</div>'+
-    '<div class="right"><span class="pill p-'+i.status+'">'+STATUSES[i.status]+'</span>'+
-      '<span style="font-size:11.5px;color:var(--muted)">'+esc(lastTouch(i.id))+'</span></div>'+
+    '<div class="right"><span class="pill p-'+i.status+'">'+STATUSES[i.status]+'</span></div>'+
   '</button>';
 }
 
