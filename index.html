@@ -109,10 +109,12 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
   box-shadow:var(--shadow);transition:.15s}
 .row:hover{border-color:var(--line-strong)}
 .row .main{min-width:0;flex:1}
-.row .nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .holder{font-size:14px;font-weight:600;color:var(--ink);margin-top:3px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .holder.free{font-weight:500;color:var(--muted)}
+.row .nm{font-weight:700;font-size:15.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .holder{font-size:13px;font-weight:500;color:var(--muted);margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:flex;align-items:center;gap:5px}
+.row .holder::before{content:"";width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.5;flex:none}
+.row .holder.free{color:var(--faint)}
 .row .holder.owed{color:var(--alert)}
 .row.isgroup{border-left-style:double;border-left-width:6px}
 .grpkids{margin:-4px 0 8px 18px;padding-left:12px;border-left:2px solid var(--line)}
@@ -357,6 +359,11 @@ const AUTH_DOMAIN_ALLOW = 'winstontcgllc.com';
    A Firebase web config is an identifier, not a secret \u2014 it is meant to ship
    in client code. Access is controlled by the database rules, which require a
    signed-in, verified account on the domain above. */
+/* Only these people may delete an item. Matched against the signed-in Google
+   account by email, by the part before the @, or by display name \u2014 so either
+   'henry' or 'henry@winstontcgllc.com' works. Editable in Setup. */
+const DEFAULT_MANAGERS = ['mags','henry','devens','jeff','winston','celina','pasan','sonia','kiara','marcus'];
+
 const BUILTIN_FIREBASE_CONFIG = {
   apiKey: "AIzaSyCa6uzJwnTcRpZPVnYRmQReap-7tgeuwfI",
   authDomain: "cph-equipment-tracker.firebaseapp.com",
@@ -399,6 +406,7 @@ const State = {
   teamsSeeded: [],
   patchLevel: 0,
   operators: [],          /* allowlist of emails; empty = anyone on the domain */
+  managers: DEFAULT_MANAGERS.slice(),
   user: null,             /* signed-in Google account */
   authReady: false,
   actor: LS.get('cph_actor') || '',
@@ -457,6 +465,7 @@ function attachData(){
           if(v && v.teamsSeeded) State.teamsSeeded = v.teamsSeeded;
           if(v && v.patchLevel) State.patchLevel = v.patchLevel;
           if(v && v.operators) State.operators = v.operators;
+          if(v && v.managers)  State.managers  = v.managers;
 
           mergeDefaultTeams(); applyPatches();
         }
@@ -475,6 +484,7 @@ function loadLocal(){
     State.teamsSeeded = d.teamsSeeded || [];
     State.patchLevel = d.patchLevel || 0;
     State.operators = d.operators || [];
+    State.managers  = d.managers  || DEFAULT_MANAGERS.slice();
   }catch(e){}
   normalize();
 }
@@ -482,7 +492,7 @@ function saveLocal(){
   if(State.online) return;
   LS.set('cph_assets_data', JSON.stringify({
     items:State.items, events:State.events, people:State.people,
-    locations:State.locations, teams:State.teams, teamsSeeded:State.teamsSeeded, patchLevel:State.patchLevel, operators:State.operators
+    locations:State.locations, teams:State.teams, teamsSeeded:State.teamsSeeded, patchLevel:State.patchLevel, operators:State.operators, managers:State.managers
   }));
 }
 /* migrate older records */
@@ -594,6 +604,20 @@ function isOperator(email){
   return list.length ? list.indexOf(e) >= 0 : true;
 }
 function currentEmail(){ return State.user ? String(State.user.email||'').toLowerCase() : ''; }
+function currentName(){ return State.user ? String(State.user.displayName||'').toLowerCase() : ''; }
+
+/* Deleting erases an item and its history, so it is limited to managers. */
+function isManager(){
+  if(!State.online) return true;                       /* solo trial mode */
+  const list = (State.managers||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean);
+  if(!list.length) return true;                        /* nobody set = no restriction */
+  const e = currentEmail(), local = e.split('@')[0], n = currentName();
+  return list.some(m => m===e || m===local || m===n);
+}
+function saveManagers(){
+  if(State.online){ fb.set(fb.ref(fb.db, fb.root+'/settings/managers'), State.managers); }
+  else saveLocal();
+}
 
 function savePatchLevel(){
   if(State.online){ fb.set(fb.ref(fb.db, fb.root+'/settings/patchLevel'), PATCH_LEVEL); }
@@ -849,7 +873,9 @@ function openItem(id){
     '<div class="btnrow noprint">'+
       '<button class="btn sm" data-act="edit">Edit details</button>'+
       '<button class="btn sm" data-act="label">Print this label</button>'+
-      '<button class="btn sm dngr" data-act="delete">Delete</button></div>';
+      (isManager()? '<button class="btn sm dngr" data-act="delete">Delete</button>' : '')+
+    '</div>'+
+    (isManager()? '' : '<div style="font-size:12.5px;color:var(--faint);margin-top:8px">Only managers can delete an item. Use Retire if it is broken, sold or gone.</div>');
 
   openSheet('Item', html, body=>{
     body.querySelectorAll('[data-act]').forEach(b=> b.onclick = ()=>itemAction(b.dataset.act, it));
@@ -884,6 +910,7 @@ function itemAction(act, it){
   if(act==='edit') return itemForm(it);
   if(act==='label') return labelSheet([it.id]);
   if(act==='delete'){
+    if(!isManager()) return toast('Only managers can delete \u2014 use Retire instead');
     if(confirm('Delete '+it.id+' \u2014 '+it.name+'?\n\nUse Retire instead if it existed but is gone. Deleting erases its history too.')){
       del('items', it.id); closeSheet(); toast('Deleted');
     }
@@ -1633,6 +1660,18 @@ function openSetup(){
       '<button class="btn full" id="addOp" style="margin-top:8px">+ Add someone</button>'+
     '</div>'+
 
+    '<div class="sectionhead"><h2>Who can delete</h2></div>'+
+    '<div class="dcard">'+
+      '<div style="font-size:13.5px;color:var(--muted);margin-bottom:10px">Deleting removes an item and its history for good, so it is limited to these people. Everyone else sees Retire instead. Entries match the signed-in Google account by email, by the part before the @, or by display name.</div>'+
+      ((State.managers||[]).length? State.managers.slice().sort().map(n=>'<div class="chk" style="padding:9px 11px">'+
+        '<div class="main"><div class="nm" style="font-size:14.5px">'+esc(n)+'</div></div>'+
+        '<button class="btn sm dngr" data-rmmgr="'+esc(n)+'">Remove</button></div>').join('')
+        : '<div style="font-size:13px;color:var(--muted)">Nobody set \u2014 anyone can delete.</div>')+
+      '<button class="btn full" id="addMgr" style="margin-top:8px">+ Add someone</button>'+
+      '<div style="font-size:12.5px;color:var(--faint);margin-top:8px">Signed in as '+esc(currentEmail()||'nobody')+
+        ' \u2014 you '+(isManager()?'can':'cannot')+' delete.</div>'+
+    '</div>'+
+
     '<div class="sectionhead"><h2>Teams</h2></div>'+
     '<div class="dcard">'+
       (State.teams.length? State.teams.map(t=>'<div class="chk" style="padding:9px 11px">'+
@@ -1690,6 +1729,19 @@ function openSetup(){
       if(e.split('@')[1] !== AUTH_DOMAIN_ALLOW) return toast('Must be an '+AUTH_DOMAIN_ALLOW+' address');
       if((State.operators||[]).map(x=>x.toLowerCase()).indexOf(e) >= 0) return toast('Already on the list');
       State.operators.push(e); saveOperators(); openSetup(); toast('Added '+e);
+    };
+    body.querySelectorAll('[data-rmmgr]').forEach(b=> b.onclick = ()=>{
+      const n = b.dataset.rmmgr;
+      if(!confirm('Remove '+n+' from the delete list?')) return;
+      State.managers = (State.managers||[]).filter(x=>x!==n);
+      saveManagers(); openSetup(); toast('Removed '+n);
+    });
+    body.querySelector('#addMgr').onclick = ()=>{
+      const n = prompt('Email, the part before the @, or the exact display name');
+      if(!n || !n.trim()) return;
+      const v = n.trim().toLowerCase();
+      if((State.managers||[]).map(x=>x.toLowerCase()).indexOf(v) >= 0) return toast('Already on the list');
+      State.managers.push(v); saveManagers(); openSetup(); toast('Added '+v);
     };
     body.querySelectorAll('[data-moveteam]').forEach(b=> b.onclick = ()=>{
       const t = teamObj(b.dataset.moveteam); if(!t) return;
