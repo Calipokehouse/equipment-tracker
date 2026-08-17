@@ -452,6 +452,10 @@ async function initFirebase(){
     fb.authInst = authMod.getAuth(app);
     State.online = true;
 
+    /* Finish a redirect sign-in if we came back from one. Safari and
+       home-screen apps often cannot use the popup flow. */
+    try{ await authMod.getRedirectResult(fb.authInst); }catch(e){ console.warn('redirect result', e); }
+
     /* Watch sign-in state. Data listeners only attach once a valid
        account is present, because the database rules will reject anyone else. */
     authMod.onAuthStateChanged(fb.authInst, u=>{
@@ -2002,13 +2006,26 @@ function whoAmISheet(){
   body=>{
     const si = body.querySelector('#signin');
     if(si) si.onclick = async ()=>{
+      const prov = new fb.auth.GoogleAuthProvider();
+      prov.setCustomParameters({hd: AUTH_DOMAIN_ALLOW});
+      /* Popups fail on iOS and in home-screen apps, where session storage is
+         partitioned. Fall back to a full-page redirect, which always works. */
+      const needsRedirect = e => !e || !e.code ||
+        ['auth/popup-blocked','auth/popup-closed-by-user','auth/cancelled-popup-request',
+         'auth/operation-not-supported-in-this-environment','auth/missing-initial-state',
+         'auth/web-storage-unsupported','auth/internal-error'].indexOf(e.code) >= 0;
       try{
-        const prov = new fb.auth.GoogleAuthProvider();
-        prov.setCustomParameters({hd: AUTH_DOMAIN_ALLOW});
         await fb.auth.signInWithPopup(fb.authInst, prov);
         closeSheet();
       }catch(e){
-        toast(e && e.code === 'auth/popup-blocked' ? 'Allow popups for this site, then try again' : 'Sign-in failed');
+        console.warn('popup sign-in failed', e);
+        if(needsRedirect(e)){
+          toast('Opening Google sign-in\u2026');
+          try{ await fb.auth.signInWithRedirect(fb.authInst, prov); }
+          catch(e2){ console.error(e2); toast('Sign-in failed \u2014 try a normal browser tab'); }
+        } else {
+          toast('Sign-in failed');
+        }
       }
     };
     const so = body.querySelector('#signout');
