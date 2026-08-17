@@ -235,6 +235,25 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
   background:#fff;color:#000;
   display:flex;align-items:center;gap:.09in;padding:.08in .09in;
 }
+
+/* Cable flag: fold down the middle around the cable so the tail reads from
+   both sides. A vertical fold keeps text upright, so both halves are identical. */
+.labelinner.flag{display:flex;align-items:stretch;gap:0;padding:0;position:relative}
+.flag .half{
+  width:1.125in;height:1.25in;box-sizing:border-box;
+  padding:.07in .06in;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.03in;
+  text-align:center;overflow:hidden;
+}
+.flag .half .fqr{width:.52in;height:.52in;flex:none}
+.flag .half .fqr svg{width:100%;height:100%;display:block}
+.flag .half .fid{font-family:var(--mono);font-weight:700;font-size:8pt;letter-spacing:-.02em;
+  line-height:1;white-space:nowrap}
+.flag .half .fnm{font-size:6pt;font-weight:600;line-height:1.15;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.flag .fold{position:absolute;left:1.125in;top:0;bottom:0;width:0;
+  border-left:1px dashed #999}
+@media print{ .flag .fold{border-left:1px dotted #bbb} }
 .label .qr{width:.60in;height:.60in;flex:none}
 .label .qr svg{width:100%;height:100%;display:block}
 .label .txt{min-width:0;flex:1}
@@ -1832,26 +1851,53 @@ function applyLabelRotation(){
     : '@page{size:2.25in 1.25in;margin:0}';
 }
 
+function labelFormat(){ return LS.get('cph_lblfmt')==='flag' ? 'flag' : 'standard'; }
+
 function labelSheet(ids){
   const list = ids ? ids.map(i=>State.items[i]).filter(Boolean)
                    : items().filter(i=>i.status!=='retired' && i.site===State.fSite).sort((a,b)=>a.id.localeCompare(b.id));
-  const tag = i =>
+  const half = i => '<div class="half">'+
+      '<div class="fqr">'+qrSvg(i.id)+'</div>'+
+      '<div class="fid">'+esc(i.id)+'</div>'+
+      '<div class="fnm">'+esc(i.name)+'</div>'+
+    '</div>';
+
+  const tagFlag = i =>
+    '<div class="label"><div class="labelinner flag">'+
+      half(i)+half(i)+'<div class="fold"></div>'+
+    '</div></div>';
+
+  const tagStd = i =>
     '<div class="label"><div class="labelinner"><div class="qr">'+qrSvg(i.id)+'</div><div class="txt">'+
       '<div class="lid">'+esc(i.id)+'</div>'+
       '<div class="lnm">'+nameLines(i.name).map(l=>'<div>'+esc(l)+'</div>').join('')+'</div>'+
       '<div class="lrule"></div>'+
-      '<div class="lloc">'+esc(i.room || i.home || 'No home set')+'</div>'+
+      ((i.room || i.home) ? '<div class="lloc">'+esc(i.room || i.home)+'</div>' : '')+
       '<div class="lsite">'+esc(siteName(i.site))+'</div>'+
     '</div></div></div>';
+
+  const tag = i => labelFormat()==='flag' ? tagFlag(i) : tagStd(i);
 
   openSheet('Labels',
     '<div class="banner noprint"><b>Before printing</b>Set your printer to the iDPRT and paper size 2.25\u00D7\u200B1.25in, margins none, scale 100%. Turn OFF headers and footers. The dashed outline below is a screen guide and will not print.</div>'+
     '<div class="btnrow noprint" style="margin-bottom:10px"><button class="btn pri" id="doPrint">Print '+list.length+' label'+(list.length===1?'':'s')+'</button>'+
       '<button class="btn" id="rotBtn">'+(LS.get('cph_rotlbl')==='1'?'\u21BA Rotated (tap to undo)':'\u21BB Rotate 90\u00B0')+'</button></div>'+
-    '<div class="noprint" style="font-size:13px;color:var(--muted);margin-bottom:14px">If a label prints sideways or spills onto the next one, tap Rotate and print again.</div>'+
+    '<div class="chiprow noprint" style="margin-bottom:6px">'+
+      '<button class="chip" data-lblfmt="standard" aria-pressed="'+(labelFormat()==='standard')+'">Standard</button>'+
+      '<button class="chip" data-lblfmt="flag" aria-pressed="'+(labelFormat()==='flag')+'">Cable flag</button>'+
+    '</div>'+
+    '<div class="noprint" style="font-size:13px;color:var(--muted);margin-bottom:14px">'+
+      (labelFormat()==='flag'
+        ? 'Fold down the dashed middle line around the cable so the two halves stick together. The tail then reads from both sides.'
+        : 'If a label prints sideways or spills onto the next one, tap Rotate and print again.')+
+    '</div>'+
     '<div class="labelgrid">'+list.map(tag).join('')+'</div>',
   body=>{
     body.querySelector('#doPrint').onclick = ()=>window.print();
+    body.querySelectorAll('[data-lblfmt]').forEach(b=> b.onclick = ()=>{
+      LS.set('cph_lblfmt', b.dataset.lblfmt);
+      labelSheet(ids);
+    });
     body.querySelector('#rotBtn').onclick = ()=>{
       const on = LS.get('cph_rotlbl')==='1' ? '0' : '1';
       LS.set('cph_rotlbl', on);
