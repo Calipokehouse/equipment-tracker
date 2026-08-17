@@ -342,6 +342,20 @@ const DEFAULT_TEAMS = [
 /* Sign-in domain. Only Google accounts on this domain may use the board. */
 const AUTH_DOMAIN_ALLOW = 'winstontcgllc.com';
 
+/* Built in so a new phone needs no setup at all: open the link, sign in, done.
+   A Firebase web config is an identifier, not a secret \u2014 it is meant to ship
+   in client code. Access is controlled by the database rules, which require a
+   signed-in, verified account on the domain above. */
+const BUILTIN_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCa6uzJwnTcRpZPVnYRmQReap-7tgeuwfI",
+  authDomain: "cph-equipment-tracker.firebaseapp.com",
+  databaseURL: "https://cph-equipment-tracker-default-rtdb.firebaseio.com",
+  projectId: "cph-equipment-tracker",
+  storageBucket: "cph-equipment-tracker.firebasestorage.app",
+  messagingSenderId: "534635900128",
+  appId: "1:534635900128:web:6964cb49ab5b18c1ccf485"
+};
+
 /* No names ship in this file. People are added inside the app and live in
    Firebase, so a public copy of this source reveals no staff roster. */
 
@@ -386,8 +400,9 @@ let fb = null;
 
 async function initFirebase(){
   const raw = LS.get('cph_fbconfig');
-  if(!raw) return false;
-  let cfg; try{ cfg = JSON.parse(raw); }catch(e){ return false; }
+  let cfg = BUILTIN_FIREBASE_CONFIG;
+  if(raw){ try{ cfg = JSON.parse(raw); }catch(e){ cfg = BUILTIN_FIREBASE_CONFIG; } }
+  if(!cfg || !cfg.databaseURL) return false;
   try{
     const appMod  = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
     const dbMod   = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js');
@@ -707,7 +722,7 @@ function viewFind(){
     '<div class="empty"><b>'+(all.length? 'No match' : 'Nothing logged yet')+'</b>'+
     (all.length? 'Try a shorter search, or clear the filters above.' : 'Add your first piece of gear to start the count.')+'</div>';
 
-  return (State.online?'':'<div class="banner"><b>Device-only mode</b>Everything you enter is saved on this device and this device alone. Open Setup (gear icon, top right) and paste your Firebase config to sync both sites.</div>')+
+  return (State.online?'':'<div class="banner"><b>Not connected</b>This device cannot reach the team database right now, so anything entered here stays on this device. Check the connection and reload.</div>')+
     siteBar()+
     '<div class="searchbox">'+
       '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'+
@@ -1483,9 +1498,9 @@ function openSetup(){
   openSheet('Setup',
     '<div class="sectionhead"><h2>Team sync</h2></div>'+
     '<div class="dcard"><div style="font-size:14px;color:var(--muted);margin-bottom:10px">'+
-      (State.online? 'Connected. Everything writes to aksvr/assets and every phone at both sites sees it instantly.'
-                   : 'Not connected. Paste the same Firebase config your other boards use, then reload.')+'</div>'+
-      '<div class="f"><label>Firebase config (JSON)</label><textarea id="fbcfg" style="min-height:120px;font-family:\'IBM Plex Mono\';font-size:12.5px">'+esc(cfg)+'</textarea></div>'+
+      (State.online? 'Connected and ready. This board ships prewired \u2014 a new phone just needs the link and a Google sign-in, nothing to paste. Leave the box below empty unless you are pointing this device at a different Firebase project.'
+                   : 'Not connected. The built-in settings failed to load \u2014 check the connection, or paste a config below to override.')+'</div>'+
+      '<div class="f"><label>Firebase config override (optional)</label><textarea id="fbcfg" placeholder="Leave empty to use the built-in project" style="min-height:110px;font-family:var(--mono);font-size:12.5px">'+esc(cfg)+'</textarea></div>'+
       '<div class="btnrow"><button class="btn acc" id="saveCfg">Save and reload</button>'+
       (cfg?'<button class="btn" id="clearCfg">Disconnect</button>':'')+'</div></div>'+
 
@@ -1523,6 +1538,7 @@ function openSetup(){
   body=>{
     body.querySelector('#saveCfg').onclick = ()=>{
       const t = body.querySelector('#fbcfg').value.trim();
+      if(!t){ LS.set('cph_fbconfig',''); location.reload(); return; }   /* back to built-in */
       try{ JSON.parse(t); }catch(e){ return toast('That is not valid JSON'); }
       LS.set('cph_fbconfig', t); location.reload();
     };
@@ -1742,8 +1758,8 @@ document.querySelectorAll('.nav button').forEach(b=>{
 document.getElementById('setupBtn').onclick = openSetup;
 function whoAmISheet(){
   if(!State.online){
-    openSheet('Device-only mode',
-      '<div class="banner"><b>Not connected yet</b>This device is running on its own private copy. Nothing syncs and no sign-in is required. Open Setup and paste your Firebase config to switch on team sync and sign-in.</div>'+
+    openSheet('Not connected',
+      '<div class="banner"><b>Cannot reach the team database</b>This device is running on its own private copy. Check the connection and reload \u2014 no setup should be needed.</div>'+
       '<div class="f"><label>Your name (used on the log while testing)</label><input id="tn" value="'+esc(State.actor||'')+'" placeholder="First and last name"></div>'+
       '<button class="btn pri full" id="tgo">Save</button>',
     b=>{ b.querySelector('#tgo').onclick = ()=>{
