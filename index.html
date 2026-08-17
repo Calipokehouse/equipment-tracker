@@ -114,6 +114,11 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .holder.free{font-weight:500;color:var(--muted)}
 .row .holder.owed{color:var(--alert)}
+.row.isgroup{border-left-style:double;border-left-width:6px}
+.grpkids{margin:-4px 0 8px 18px;padding-left:12px;border-left:2px solid var(--line)}
+.grpkids .row{margin-bottom:6px;box-shadow:none}
+.grptag{font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--accent-ink);
+  background:var(--accent-soft);border:1px solid #C4E0CD;border-radius:4px;padding:2px 7px}
 .flagtag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
   color:var(--alert);background:var(--alert-soft);border:1px solid #EBB6B1;border-radius:4px;padding:1px 6px}
 .row .meta{font-size:12px;color:var(--faint);margin-top:5px;display:flex;align-items:center;gap:6px;min-width:0}
@@ -398,6 +403,7 @@ const State = {
   authReady: false,
   actor: LS.get('cph_actor') || '',
   tab:'find', q:'', fCat:'', fStatus:'', fTeam:'', fSite: LS.get('cph_site') || 'A2',
+  openGroups:{},
   online:false
 };
 
@@ -724,7 +730,7 @@ function viewFind(){
       teamsUsed.map(t=>'<button class="chip team" data-team-filter="'+esc(t)+'" aria-pressed="'+(State.fTeam===t)+'">'+esc(t)+'</button>').join('')+
     '</div>' : '';
 
-  const rows = list.length ? list.map(rowHtml).join('') :
+  const rows = list.length ? groupedRows(list) :
     '<div class="empty"><b>'+(all.length? 'No match' : 'Nothing logged yet')+'</b>'+
     (all.length? 'Try a shorter search, or clear the filters above.' : 'Add your first piece of gear to start the count.')+'</div>';
 
@@ -747,16 +753,42 @@ function viewFind(){
     rows;
 }
 
-function rowHtml(i){
+/* Identical items sitting in the same place collapse into one row so the list
+   stays short, while each unit keeps its own ID, label and history. */
+function groupKey(i){
+  return [i.name, i.status, i.holderId||'', i.room||'', i.home||'', i.site, i.team||''].join('\u0001');
+}
+function groupedRows(list){
+  const order = [], groups = {};
+  list.forEach(i=>{
+    const k = groupKey(i);
+    if(!groups[k]){ groups[k] = []; order.push(k); }
+    groups[k].push(i);
+  });
+  return order.map(k=>{
+    const g = groups[k];
+    if(g.length === 1) return rowHtml(g[0]);
+    const open = !!State.openGroups[k];
+    const units = g.reduce((n,x)=>n+(x.qty||1),0);
+    const head = rowHtml(g[0], {count:units, groupKey:k, open});
+    return head + (open ? '<div class="grpkids">'+g.map(x=>rowHtml(x)).join('')+'</div>' : '');
+  }).join('');
+}
+
+function rowHtml(i, grp){
   const owed = i.status==='with_employee' && isFormer(i.holderId);
   /* The question people actually ask is "who has it", so the holder gets its
      own line at full width. Who logged the move lives in the item history. */
   const held = i.status==='with_employee' || i.status==='with_team' || i.status==='in_room';
-  return '<button class="row s-'+i.status+(owed?' s-owed':'')+'" data-item="'+esc(i.id)+'">'+
+  const qty = grp ? grp.count : (i.qty||1);
+  const attr = grp ? 'data-group="'+esc(grp.groupKey)+'"' : 'data-item="'+esc(i.id)+'"';
+  return '<button class="row s-'+i.status+(owed?' s-owed':'')+(grp?' isgroup':'')+'" '+attr+'>'+
     '<div class="main">'+
-      '<div class="nm">'+esc(i.name)+' <span class="qty">\u00D7'+(i.qty||1)+'</span></div>'+
+      '<div class="nm">'+esc(i.name)+' <span class="qty">\u00D7'+qty+'</span></div>'+
       '<div class="holder'+(held?'':' free')+(owed?' owed':'')+'">'+esc(holderText(i))+'</div>'+
-      '<div class="meta">'+chip(i.id,'ghost')+
+      '<div class="meta">'+
+        (grp ? '<span class="grptag">'+(grp.open?'\u25BE hide':'\u25B8 show')+' '+qty+' tracked separately</span>'
+             : chip(i.id,'ghost'))+
         (i.site!==State.fSite? ' <span class="sitetag other">'+esc(siteShort(i.site))+'</span>':'')+
         (owed? ' <span class="flagtag">not returned</span>':'')+
       '</div>'+
@@ -970,6 +1002,12 @@ function itemForm(existing){
     '<div class="f2"><div class="f"><label>Category</label><select id="cat">'+cats+'</select></div>'+
       '<div class="f"><label>Quantity</label><input id="qty" type="number" min="1" value="'+(it.qty||1)+'"></div></div>'+
     (existing? '' :
+      '<label class="chk" id="splitWrap" style="display:none;margin-bottom:12px">'+
+        '<input type="checkbox" id="splitQty" checked>'+
+        '<div class="main"><div class="nm" style="font-size:14.5px">Track each one separately</div>'+
+        '<div class="meta">Creates its own ID and label per unit, so you can tell them apart. '+
+        'Leave off for things you only count, like a bin of cables.</div></div></label>')+
+    (existing? '' :
       '<div class="f"><label>Checked out to (optional)</label><select id="holder">'+
         '<option value="">\u2014 nobody, it is available \u2014</option>'+
         SITES.map(st=>{
@@ -995,6 +1033,11 @@ function itemForm(existing){
 
     /* Picking a person moves the item to that person's site, since that is
        where it now physically is. Changing the site by hand still wins. */
+    const qtyInput = body.querySelector('#qty'), splitWrap = body.querySelector('#splitWrap');
+    const syncSplit = ()=>{ if(splitWrap) splitWrap.style.display =
+      (parseInt(qtyInput.value,10)||1) > 1 ? 'flex' : 'none'; };
+    if(qtyInput){ qtyInput.oninput = syncSplit; syncSplit(); }
+
     const holderSel = body.querySelector('#holder');
     if(holderSel) holderSel.onchange = ()=>{
       const p = State.people[holderSel.value];
@@ -1039,6 +1082,24 @@ function itemForm(existing){
         holderId: hid, holderName: hnm,
         createdAt: it.createdAt||Date.now(), updatedAt: Date.now()
       };
+      const splitBox = body.querySelector('#splitQty');
+      const doSplit = !existing && splitBox && splitBox.checked && rec.qty > 1;
+
+      if(doSplit){
+        const n = rec.qty;
+        for(let k=0;k<n;k++){
+          const one = Object.assign({}, rec, {qty:1, createdAt:Date.now()+k, updatedAt:Date.now()+k});
+          one.id = nextId(cat);
+          State.items[one.id] = one;          /* so nextId sees it on the next pass */
+          put('items', one.id, one);
+          pushEvent({assetId:one.id, assetName:name, action:'created', site:one.site,
+            text:'Added to inventory \u2014 unit '+(k+1)+' of '+n});
+        }
+        toast('Added '+n+' separate items');
+        closeSheet(); render();
+        return;
+      }
+
       put('items', rec.id, rec);
       State.items[rec.id] = rec;
       if(!existing){
@@ -1769,6 +1830,11 @@ function wire(){
   const el2 = id => app.querySelector('#'+id);
 
   app.querySelectorAll('[data-item]').forEach(b=> b.onclick = ()=>openItem(b.dataset.item));
+  app.querySelectorAll('[data-group]').forEach(b=> b.onclick = ()=>{
+    const k = b.dataset.group;
+    State.openGroups[k] = !State.openGroups[k];
+    render();
+  });
   app.querySelectorAll('[data-person]').forEach(b=> b.onclick = ()=>openPerson(b.dataset.person));
   app.querySelectorAll('[data-room]').forEach(b=> b.onclick = ()=>openRoom(b.dataset.room));
   app.querySelectorAll('[data-team-open]').forEach(b=> b.onclick = ()=>openTeam(b.dataset.teamOpen));
