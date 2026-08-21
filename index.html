@@ -121,6 +121,11 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
 .grpkids .row{margin-bottom:6px;box-shadow:none}
 .grptag{font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--accent-ink);
   background:var(--accent-soft);border:1px solid #C4E0CD;border-radius:4px;padding:2px 7px}
+.chk.pick{margin-bottom:6px}
+.chk.pick .meta{font-size:12px;color:var(--faint);margin-top:3px;display:flex;align-items:center;gap:6px}
+.donetag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--accent-ink);background:var(--accent-soft);border:1px solid #C4E0CD;border-radius:4px;padding:1px 6px}
+.btn[disabled]{opacity:.45;pointer-events:none}
 .flagtag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
   color:var(--alert);background:var(--alert-soft);border:1px solid #EBB6B1;border-radius:4px;padding:1px 6px}
 .row .meta{font-size:12px;color:var(--faint);margin-top:5px;display:flex;align-items:center;gap:6px;min-width:0}
@@ -431,6 +436,7 @@ const State = {
   actor: LS.get('cph_actor') || '',
   tab:'find', q:'', fCat:'', fStatus:'', fTeam:'', fSite: LS.get('cph_site') || 'A2',
   openGroups:{},
+  lblSel:{}, lblFilter:'unprinted', lblWho:'',
   online:false
 };
 
@@ -882,6 +888,7 @@ function openItem(id){
           (it.status==='with_team'? (teamLead(itemTeam(it))? ' <span style="color:var(--muted)">('+esc(teamLead(itemTeam(it)))+' accountable)</span>' : ' <span style="color:var(--alert)">(no lead set)</span>') : '')
           : '<span style="color:var(--muted)">None</span>')+'</dd>'+
         '<dt>Home</dt><dd>'+(it.home? esc(it.home) : '<span style="color:var(--faint)">no fixed home</span>')+'</dd>'+
+        '<dt>Label</dt><dd>'+(it.printedAt? 'printed '+fmtDate(it.printedAt) : '<span style="color:var(--alert)">not printed yet</span>')+'</dd>'+
         '<dt>Quantity</dt><dd>'+(it.qty||1)+'</dd>'+
         (it.serial?'<dt>Serial</dt><dd style="font-family:\'IBM Plex Mono\';font-size:13px">'+esc(it.serial)+'</dd>':'')+
         (it.condition?'<dt>Condition</dt><dd>'+esc(it.condition)+'</dd>':'')+
@@ -1858,19 +1865,61 @@ function applyLabelRotation(){
 function labelFormat(){ return LS.get('cph_lblfmt')==='flag' ? 'flag' : 'standard'; }
 
 function labelSheet(ids){
-  const list = ids ? ids.map(i=>State.items[i]).filter(Boolean)
-                   : items().filter(i=>i.status!=='retired' && i.site===State.fSite).sort((a,b)=>a.id.localeCompare(b.id));
+  /* Selection state lives on State so re-renders inside the sheet keep it. */
+  const pool = items().filter(i=>i.status!=='retired' && i.site===State.fSite)
+                      .sort((a,b)=>a.id.localeCompare(b.id));
+  if(ids){ State.lblSel = {}; ids.forEach(k=>State.lblSel[k]=true); State.lblFilter='all'; State.lblWho=''; }
+  if(!State.lblSel) State.lblSel = {};
+  if(State.lblFilter===undefined) State.lblFilter = 'unprinted';
+  if(State.lblWho===undefined) State.lblWho = '';
+
+  /* who/where options, built from what actually exists */
+  const whoOpts = (()=>{
+    const out = [];
+    const ppl = {}, rooms = {}, teams = {}, homes = {};
+    pool.forEach(i=>{
+      if(i.status==='with_employee' && i.holderName) ppl['p:'+i.holderId] = i.holderName;
+      if(i.status==='in_room' && i.room) rooms['r:'+i.room] = i.room;
+      if(i.status==='with_team' && i.team) teams['t:'+i.team] = i.team;
+      if(i.home) homes['h:'+i.home] = i.home;
+    });
+    const grp = (label, obj)=>{
+      const keys = Object.keys(obj).sort((a,b)=>obj[a].localeCompare(obj[b]));
+      return keys.length ? '<optgroup label="'+esc(label)+'">'+
+        keys.map(k=>'<option value="'+esc(k)+'" '+(State.lblWho===k?'selected':'')+'>'+esc(obj[k])+'</option>').join('')+
+        '</optgroup>' : '';
+    };
+    out.push('<option value="" '+(State.lblWho?'':'selected')+'>Everything at '+esc(siteShort(State.fSite))+'</option>');
+    out.push(grp('Checked out to', ppl));
+    out.push(grp('Stream room', rooms));
+    out.push(grp('Team', teams));
+    out.push(grp('Home location', homes));
+    return out.join('');
+  })();
+
+  const matchWho = i =>{
+    if(!State.lblWho) return true;
+    const [k,v] = [State.lblWho.slice(0,2), State.lblWho.slice(2)];
+    if(k==='p:') return i.holderId===v;
+    if(k==='r:') return i.room===v;
+    if(k==='t:') return i.team===v && i.status==='with_team';
+    if(k==='h:') return i.home===v;
+    return true;
+  };
+  const matchFilter = i =>
+    State.lblFilter==='unprinted' ? !i.printedAt :
+    State.lblFilter==='printed'   ? !!i.printedAt : true;
+
+  const shown = pool.filter(i=>matchWho(i) && matchFilter(i));
+  const chosen = pool.filter(i=>State.lblSel[i.id]);
+
   const half = i => '<div class="half">'+
       '<div class="fqr">'+qrSvg(i.id)+'</div>'+
       '<div class="fid">'+esc(i.id)+'</div>'+
       '<div class="fnm">'+esc(i.name)+'</div>'+
     '</div>';
-
   const tagFlag = i =>
-    '<div class="label"><div class="labelinner flag">'+
-      half(i)+half(i)+'<div class="fold"></div>'+
-    '</div></div>';
-
+    '<div class="label"><div class="labelinner flag">'+half(i)+half(i)+'<div class="fold"></div></div></div>';
   const tagStd = i =>
     '<div class="label"><div class="labelinner"><div class="qr">'+qrSvg(i.id)+'</div><div class="txt">'+
       '<div class="lid">'+esc(i.id)+'</div>'+
@@ -1879,36 +1928,93 @@ function labelSheet(ids){
       ((i.room || i.home) ? '<div class="lloc">'+esc(i.room || i.home)+'</div>' : '')+
       '<div class="lsite">'+esc(siteName(i.site))+'</div>'+
     '</div></div></div>';
-
   const tag = i => labelFormat()==='flag' ? tagFlag(i) : tagStd(i);
 
+  const pickRow = i =>
+    '<label class="chk pick'+(State.lblSel[i.id]?' done':'')+'" style="padding:9px 11px">'+
+      '<input type="checkbox" data-pick="'+esc(i.id)+'"'+(State.lblSel[i.id]?' checked':'')+'>'+
+      '<div class="main">'+
+        '<div class="nm" style="font-size:14px">'+esc(i.name)+'</div>'+
+        '<div class="meta">'+chip(i.id,'ghost')+' '+esc(holderText(i)||siteShort(i.site))+
+          (i.printedAt? ' <span class="donetag">printed</span>':'')+'</div>'+
+      '</div>'+
+    '</label>';
+
   openSheet('Labels',
-    '<div class="banner noprint"><b>Before printing</b>Set your printer to the iDPRT and paper size 2.25\u00D7\u200B1.25in, margins none, scale 100%. Turn OFF headers and footers. The dashed outline below is a screen guide and will not print.</div>'+
-    '<div class="btnrow noprint" style="margin-bottom:10px"><button class="btn pri" id="doPrint">Print '+list.length+' label'+(list.length===1?'':'s')+'</button>'+
-      '<button class="btn" id="rotBtn">'+(LS.get('cph_rotlbl')==='1'?'\u21BA Rotated (tap to undo)':'\u21BB Rotate 90\u00B0')+'</button></div>'+
+    '<div class="chiprow noprint" style="margin-bottom:8px">'+
+      ['unprinted','all','printed'].map(f=>'<button class="chip" data-lblfilter="'+f+'" aria-pressed="'+(State.lblFilter===f)+'">'+
+        (f==='unprinted'?'Not printed yet':f==='all'?'All':'Already printed')+'</button>').join('')+
+    '</div>'+
+    '<div class="f noprint"><label>Who or where</label><select id="lblWho">'+whoOpts+'</select></div>'+
+
+    '<div class="btnrow noprint" style="margin-bottom:8px">'+
+      '<button class="btn sm" id="selAll">Select all '+shown.length+'</button>'+
+      '<button class="btn sm" id="selNone">Clear</button>'+
+    '</div>'+
+
+    '<div class="noprint" style="max-height:44vh;overflow:auto;margin-bottom:12px">'+
+      (shown.length? shown.map(pickRow).join('')
+        : '<div class="empty"><b>Nothing here</b>'+
+          (State.lblFilter==='unprinted'? 'Everything matching has already been printed.' : 'Try a different filter.')+'</div>')+
+    '</div>'+
+
     '<div class="chiprow noprint" style="margin-bottom:6px">'+
       '<button class="chip" data-lblfmt="standard" aria-pressed="'+(labelFormat()==='standard')+'">Standard</button>'+
       '<button class="chip" data-lblfmt="flag" aria-pressed="'+(labelFormat()==='flag')+'">Cable flag</button>'+
+      '<button class="chip" id="rotBtn">'+(LS.get('cph_rotlbl')==='1'?'\u21BA Rotated':'\u21BB Rotate 90\u00B0')+'</button>'+
     '</div>'+
-    '<div class="noprint" style="font-size:13px;color:var(--muted);margin-bottom:14px">'+
+    '<div class="noprint" style="font-size:12.5px;color:var(--muted);margin-bottom:12px">'+
       (labelFormat()==='flag'
-        ? 'Fold down the dashed middle line around the cable so the two halves stick together. The tail then reads from both sides.'
-        : 'If a label prints sideways or spills onto the next one, tap Rotate and print again.')+
+        ? 'Fold down the dashed middle line around the cable so both sides read.'
+        : 'Paper 2.25\u00D7\u200B1.25in, margins none, scale 100%, headers off.')+
     '</div>'+
-    '<div class="labelgrid">'+list.map(tag).join('')+'</div>',
+
+    '<div class="btnrow noprint" style="margin-bottom:6px">'+
+      '<button class="btn pri" id="doPrint"'+(chosen.length?'':' disabled')+'>Print '+chosen.length+' label'+(chosen.length===1?'':'s')+'</button>'+
+      (chosen.length? '<button class="btn sm" id="markPrinted">Mark as printed</button>' : '')+
+    '</div>'+
+    (chosen.length? '<div class="noprint" style="font-size:12.5px;color:var(--faint);margin-bottom:10px">Printing marks these as printed so they drop out of the list next time.</div>':'')+
+
+    '<div class="labelgrid">'+chosen.map(tag).join('')+'</div>',
   body=>{
-    body.querySelector('#doPrint').onclick = ()=>window.print();
-    body.querySelectorAll('[data-lblfmt]').forEach(b=> b.onclick = ()=>{
-      LS.set('cph_lblfmt', b.dataset.lblfmt);
-      labelSheet(ids);
+    const refresh = ()=>labelSheet(null);
+
+    body.querySelectorAll('[data-lblfilter]').forEach(b=> b.onclick = ()=>{
+      State.lblFilter = b.dataset.lblfilter; refresh(); });
+
+    const whoSel = body.querySelector('#lblWho');
+    if(whoSel) whoSel.onchange = ()=>{ State.lblWho = whoSel.value; refresh(); };
+
+    body.querySelectorAll('[data-pick]').forEach(cb=> cb.onchange = ()=>{
+      if(cb.checked) State.lblSel[cb.dataset.pick] = true;
+      else delete State.lblSel[cb.dataset.pick];
+      refresh();
     });
+
+    body.querySelector('#selAll').onclick = ()=>{ shown.forEach(i=>State.lblSel[i.id]=true); refresh(); };
+    body.querySelector('#selNone').onclick = ()=>{ State.lblSel = {}; refresh(); };
+
+    body.querySelectorAll('[data-lblfmt]').forEach(b=> b.onclick = ()=>{
+      LS.set('cph_lblfmt', b.dataset.lblfmt); refresh(); });
+
     body.querySelector('#rotBtn').onclick = ()=>{
-      const on = LS.get('cph_rotlbl')==='1' ? '0' : '1';
-      LS.set('cph_rotlbl', on);
-      applyLabelRotation();
-      toast(on==='1' ? 'Rotated \u2014 print again' : 'Back to normal');
-      labelSheet(ids);
+      LS.set('cph_rotlbl', LS.get('cph_rotlbl')==='1' ? '0' : '1');
+      applyLabelRotation(); refresh();
     };
+
+    const stamp = ()=>{
+      chosen.forEach(i=>{
+        const upd = Object.assign({}, State.items[i.id], {printedAt: Date.now()});
+        State.items[i.id] = upd;
+        put('items', i.id, upd);
+      });
+    };
+
+    const dp = body.querySelector('#doPrint');
+    if(dp) dp.onclick = ()=>{ window.print(); setTimeout(()=>{ stamp(); refresh(); }, 800); };
+
+    const mp = body.querySelector('#markPrinted');
+    if(mp) mp.onclick = ()=>{ stamp(); toast('Marked '+chosen.length+' as printed'); refresh(); };
   });
 }
 
