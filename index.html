@@ -98,7 +98,8 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.015em}
 .chip{border:1px solid var(--line-strong);background:#fff;border-radius:999px;padding:7px 14px;font-size:13px;font-weight:500;color:var(--muted);transition:.15s}
 .chip:hover{border-color:var(--ink);color:var(--ink)}
 .chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
-.chip.team[aria-pressed="true"],.chip.room[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip.team[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip.room[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:#3A2C05}
 
 .sectionhead{display:flex;align-items:baseline;gap:9px;margin:18px 0 9px}
 .sectionhead h2{font-size:11px;text-transform:uppercase;letter-spacing:.13em;font-weight:600;color:var(--faint);font-family:var(--body)}
@@ -435,7 +436,7 @@ const State = {
   user: null,             /* signed-in Google account */
   authReady: false,
   actor: LS.get('cph_actor') || '',
-  tab:'find', q:'', fCat:'', fStatus:'', fTeam:'', fSite: LS.get('cph_site') || 'A2',
+  tab:'find', q:'', fCat:'', fStatus:'', fTeam:'', fRoom:'', fSite: LS.get('cph_site') || 'A2',
   openGroups:{},
   lblSel:{}, lblFilter:'unprinted', lblWho:'',
   online:false
@@ -758,6 +759,8 @@ function viewFind(){
   let list = all.filter(i=>i.status!=='retired' || State.fStatus==='retired');
   if(State.fCat) list = list.filter(i=>i.category===State.fCat);
   if(State.fTeam) list = list.filter(i=>itemTeam(i)===State.fTeam);
+  /* A room's gear means what is in it now plus what lives there but is out. */
+  if(State.fRoom) list = list.filter(i=>i.room===State.fRoom || i.home===State.fRoom);
   if(State.fStatus) list = list.filter(i=>i.status===State.fStatus);
   if(q) list = list.filter(i=>[i.id,i.name,i.serial,i.home,i.room,i.holderName,i.notes,itemTeam(i),catLabel(i.category)]
       .join(' ').toLowerCase().includes(q));
@@ -776,6 +779,14 @@ function viewFind(){
 
   const statusChips = ['','available','in_room','with_team','with_employee','retired'].map(s=>
     '<button class="chip" data-status="'+s+'" aria-pressed="'+(State.fStatus===s)+'">'+(s?STATUSES[s]:'Any status')+'</button>').join('');
+
+  const roomsUsed = rooms().filter(r=>r.site===State.fSite &&
+    all.some(i=>i.room===r.name || i.home===r.name));
+  const roomChips = roomsUsed.length ?
+    '<div class="chiprow">'+
+      '<button class="chip room" data-froom="" aria-pressed="'+(State.fRoom==='')+'">Any room</button>'+
+      roomsUsed.map(r=>'<button class="chip room" data-froom="'+esc(r.name)+'" aria-pressed="'+(State.fRoom===r.name)+'">'+esc(r.name)+'</button>').join('')+
+    '</div>' : '';
 
   const teamsUsed = teamNames().filter(t=>all.some(i=>itemTeam(i)===t));
   const teamChips = teamsUsed.length ?
@@ -797,7 +808,7 @@ function viewFind(){
     '</div>'+
     (searching? '<div class="crossnote">Searching both locations \u2014 each result shows where it is</div>':'')+
     '<div class="counts">'+countCards+'</div>'+
-    '<div class="chiprow">'+statusChips+'</div>'+teamChips+
+    '<div class="chiprow">'+statusChips+'</div>'+roomChips+teamChips+
     '<div class="btnrow" style="margin-bottom:6px">'+
       '<button class="btn pri" id="addItem">+ Add gear</button>'+
       '<button class="btn" id="printLabels">Print labels</button>'+
@@ -1083,7 +1094,11 @@ function itemForm(existing){
     '<div class="f"><label>Condition</label><select id="cond">'+conds+'</select></div>'+
     '<div class="f"><label>Serial / model (optional)</label><input id="serial" value="'+esc(it.serial||'')+'"></div>'+
     '<div class="f"><label>Notes (optional)</label><textarea id="notes" placeholder="Anything the next person needs to know">'+esc(it.notes||'')+'</textarea></div>'+
-    (existing? '<div class="banner" style="background:var(--accent-soft);border-color:#B9C8F4">Asset ID '+esc(it.id)+' stays the same so the printed label keeps working.</div>':'')+
+    (existing? '<div class="banner" style="background:var(--accent-soft);border-color:#B9C8F4">'+
+      (it.printedAt
+        ? '<b>ID is locked</b>The label for '+esc(it.id)+' is already printed, so the ID stays put even if you change the category. Reprint only if you want the prefix to match.'
+        : '<b>ID follows the category</b>No label printed yet, so changing the category renumbers '+esc(it.id)+' to match. Its history comes along.')+
+      '</div>':'')+
     '<button class="btn pri full" id="save">'+(existing?'Save changes':'Add to inventory')+'</button>',
   body=>{
     const siteSel = body.querySelector('#site'), homeSel = body.querySelector('#home');
@@ -1155,6 +1170,31 @@ function itemForm(existing){
         }
         toast('Added '+n+' separate items');
         closeSheet(); render();
+        return;
+      }
+
+      /* If the category changed and no label exists yet, renumber so the prefix
+         matches. The old ID is only meaningful once it is printed on something. */
+      if(existing && !it.printedAt && cat !== it.category){
+        const oldId = it.id, newId = nextId(cat);
+        rec.id = newId;
+        put('items', newId, rec);
+        State.items[newId] = rec;
+        del('items', oldId);
+        delete State.items[oldId];
+        /* carry the history across so the audit trail is not orphaned */
+        Object.entries(State.events).forEach(([k,e])=>{
+          if(e.assetId === oldId){
+            const ue = Object.assign({}, e, {assetId:newId});
+            State.events[k] = ue;
+            if(State.online) fb.set(fb.ref(fb.db, fb.root+'/events/'+k), ue);
+          }
+        });
+        if(!State.online) saveLocal();
+        pushEvent({assetId:newId, assetName:name, action:'renumbered', site:rec.site,
+          text:'Renumbered '+oldId+' to '+newId+' after the category changed'});
+        toast('Renumbered to '+newId);
+        openItem(newId);
         return;
       }
 
@@ -2048,6 +2088,7 @@ function wire(){
   app.querySelectorAll('[data-room]').forEach(b=> b.onclick = ()=>openRoom(b.dataset.room));
   app.querySelectorAll('[data-team-open]').forEach(b=> b.onclick = ()=>openTeam(b.dataset.teamOpen));
   app.querySelectorAll('[data-team-filter]').forEach(b=> b.onclick = ()=>{ State.fTeam = b.dataset.teamFilter; render(); });
+  app.querySelectorAll('[data-froom]').forEach(b=> b.onclick = ()=>{ State.fRoom = b.dataset.froom; render(); });
   app.querySelectorAll('[data-site]').forEach(b=> b.onclick = ()=>{
     State.fSite = b.dataset.site; LS.set('cph_site', State.fSite); render(); });
 
@@ -2084,6 +2125,27 @@ document.querySelectorAll('.nav button').forEach(b=>{
   b.onclick = ()=>{ stopScanner(); State.tab = b.dataset.tab; setNav(); window.scrollTo(0,0); render(); };
 });
 document.getElementById('setupBtn').onclick = openSetup;
+/* Show the actual Firebase error code. A generic "sign-in failed" is
+   undiagnosable, and these codes each have a specific fix. */
+function showAuthError(e){
+  const code = (e && e.code) || 'unknown';
+  const help = {
+    'auth/unauthorized-domain': 'This site is not in the Firebase authorised domains list.',
+    'auth/missing-initial-state': 'Browser storage is blocked. Try a normal tab, not a home-screen app.',
+    'auth/popup-blocked': 'Allow popups for this site, then try again.',
+    'auth/network-request-failed': 'No connection to Google. Check the network.',
+    'auth/internal-error': 'Google rejected the request. Usually a temporary glitch \u2014 try again.',
+    'auth/invalid-api-key': 'The Firebase config in this build is wrong.'
+  }[code] || 'Ask for help and quote this code.';
+  openSheet('Sign-in failed',
+    '<div class="banner" style="background:var(--alert-soft);border-color:#EBB6B1">'+
+      '<b>'+esc(code)+'</b>'+esc(help)+'</div>'+
+    '<div class="dcard"><div style="font-size:13px;color:var(--muted);word-break:break-word">'+
+      esc((e && e.message) || String(e))+'</div></div>'+
+    '<button class="btn pri full" id="tryAgain">Try again</button>',
+  b=>{ b.querySelector('#tryAgain').onclick = ()=>whoAmISheet(); });
+}
+
 function whoAmISheet(){
   if(!State.online){
     openSheet('Not connected',
@@ -2117,22 +2179,32 @@ function whoAmISheet(){
       prov.setCustomParameters({hd: AUTH_DOMAIN_ALLOW});
       /* Popups fail on iOS and in home-screen apps, where session storage is
          partitioned. Fall back to a full-page redirect, which always works. */
-      const needsRedirect = e => !e || !e.code ||
-        ['auth/popup-blocked','auth/popup-closed-by-user','auth/cancelled-popup-request',
-         'auth/operation-not-supported-in-this-environment','auth/missing-initial-state',
-         'auth/web-storage-unsupported','auth/internal-error'].indexOf(e.code) >= 0;
+      /* Popup is the primary path and works nearly everywhere. Redirect is only
+         used when the environment genuinely cannot open a popup \u2014 not for a
+         cancelled popup or a transient error, because redirect is itself fragile
+         when the auth domain differs from the site domain. */
+      const cannotPopup = e => e && e.code && [
+        'auth/popup-blocked',
+        'auth/operation-not-supported-in-this-environment',
+        'auth/web-storage-unsupported'
+      ].indexOf(e.code) >= 0;
+      const userCancelled = e => e && e.code && [
+        'auth/popup-closed-by-user','auth/cancelled-popup-request'
+      ].indexOf(e.code) >= 0;
+
       try{
         await fb.auth.signInWithPopup(fb.authInst, prov);
         closeSheet();
       }catch(e){
         console.warn('popup sign-in failed', e);
-        if(needsRedirect(e)){
+        if(userCancelled(e)) return;                       /* they closed it on purpose */
+        if(cannotPopup(e)){
           toast('Opening Google sign-in\u2026');
           try{ await fb.auth.signInWithRedirect(fb.authInst, prov); }
-          catch(e2){ console.error(e2); toast('Sign-in failed \u2014 try a normal browser tab'); }
-        } else {
-          toast('Sign-in failed');
+          catch(e2){ console.error(e2); showAuthError(e2); }
+          return;
         }
+        showAuthError(e);
       }
     };
     const so = body.querySelector('#signout');
